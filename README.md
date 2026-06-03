@@ -79,10 +79,14 @@ python3 bufferbloat.py --verbose
 ## Preset targets
 
 ```
-Global:    google, cloudflare, opendns
-Europe:    amsterdam, frankfurt, london, paris, sofia, bucharest
-Turkey:    istanbul, ist-ix, turkey-cf, turkey-google
-Middle East: dubai
+Global:           cloudflare, google, quad9, opendns
+Western Europe:   amsterdam, frankfurt, london, paris, madrid, milan, zurich, lisbon, brussels
+Northern Europe:  stockholm, helsinki, oslo, copenhagen
+Eastern Europe:   warsaw, prague, vienna, budapest, sofia, bucharest
+Turkey:           istanbul, ist-ix
+Middle East:      dubai
+North America:    newyork, ashburn
+Asia Pacific:     singapore, tokyo, sydney
 ```
 
 Use `--list-targets` to see IP addresses and descriptions.

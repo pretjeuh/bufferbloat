@@ -55,24 +55,45 @@ SERVERS = {
 
 # Preset targets: name -> (ping_host, description)
 TARGETS = {
-    # Global / anycast
-    "google":         ("8.8.8.8",        "Google DNS (anycast, global)"),
-    "cloudflare":     ("1.1.1.1",        "Cloudflare DNS (anycast, global)"),
-    "opendns":        ("208.67.222.222", "OpenDNS (anycast, global)"),
-    # Europe
-    "amsterdam":      ("194.109.6.66",   "AMS-IX Amsterdam, Netherlands"),
-    "frankfurt":      ("80.81.192.1",    "DE-CIX Frankfurt, Germany"),
-    "london":         ("5.57.80.1",      "LINX London, UK"),
-    "paris":          ("193.251.128.1",  "France-IX Paris, France"),
+    # Global / anycast (nearest PoP, good baseline)
+    "cloudflare":     ("1.1.1.1",          "Cloudflare DNS (anycast, global)"),
+    "google":         ("8.8.8.8",          "Google DNS (anycast, global)"),
+    "quad9":          ("9.9.9.9",          "Quad9 DNS (anycast, global)"),
+    "opendns":        ("208.67.222.222",   "OpenDNS (anycast, global)"),
+    # Western Europe
+    "amsterdam":      ("194.109.6.66",     "AMS-IX Amsterdam, Netherlands"),
+    "frankfurt":      ("80.81.192.1",      "DE-CIX Frankfurt, Germany"),
+    "london":         ("5.57.80.1",        "LINX London, UK"),
+    "paris":          ("193.251.128.1",    "France-IX Paris, France"),
+    "madrid":         ("195.66.224.51",    "ESPANIX Madrid, Spain"),
+    "milan":          ("193.201.224.225",  "MIX Milan, Italy"),
+    "zurich":         ("194.42.48.1",      "SwissIX Zurich, Switzerland"),
+    "lisbon":         ("194.65.48.1",      "GigaPIX Lisbon, Portugal"),
+    "brussels":       ("193.191.16.1",     "BNIX Brussels, Belgium"),
+    # Northern Europe
+    "stockholm":      ("195.69.119.1",     "Netnod Stockholm, Sweden"),
+    "helsinki":       ("193.110.224.3",    "FICIX Helsinki, Finland"),
+    "oslo":           ("193.156.90.1",     "NIX Oslo, Norway"),
+    "copenhagen":     ("193.163.0.1",      "Netnod Copenhagen, Denmark"),
+    # Eastern / Central Europe
+    "warsaw":         ("195.187.255.254",  "PLIX Warsaw, Poland"),
+    "prague":         ("91.210.16.1",      "NIX.CZ Prague, Czech Republic"),
+    "vienna":         ("193.0.0.1",        "RIPE NCC Vienna, Austria"),
+    "budapest":       ("193.188.137.1",    "BIX Budapest, Hungary"),
+    "sofia":          ("217.16.12.1",      "B-IX Sofia, Bulgaria"),
+    "bucharest":      ("185.1.47.1",       "INTERLAN Bucharest, Romania"),
     # Turkey
-    "istanbul":       ("195.175.39.39",  "Turk Telekom Istanbul, Turkey"),
-    "turkey-google":  ("8.8.8.8",        "Google DNS via Turkey (anycast)"),
-    "turkey-cf":      ("1.1.1.1",        "Cloudflare via Turkey (anycast)"),
-    "ist-ix":         ("193.140.100.1",  "IXTR Istanbul Internet Exchange, Turkey"),
-    # Middle East / nearby
-    "dubai":          ("185.120.0.1",    "Emirates IX Dubai, UAE"),
-    "sofia":          ("217.16.12.1",    "B-IX Sofia, Bulgaria"),
-    "bucharest":      ("185.1.47.1",     "INTERLAN Bucharest, Romania"),
+    "istanbul":       ("193.140.100.1",    "IXTR Istanbul Internet Exchange, Turkey"),
+    "ist-ix":         ("193.140.100.1",    "IXTR Istanbul Internet Exchange, Turkey"),
+    # Middle East
+    "dubai":          ("185.120.0.1",      "Emirates IX Dubai, UAE"),
+    # North America
+    "newyork":        ("198.32.134.1",     "DE-CIX New York, USA"),
+    "ashburn":        ("198.32.195.1",     "Equinix Ashburn (DC), USA"),
+    # Asia Pacific
+    "singapore":      ("103.11.68.1",      "SGIX Singapore"),
+    "tokyo":          ("202.249.2.1",      "JPIX Tokyo, Japan"),
+    "sydney":         ("218.100.52.1",     "PIPE Sydney, Australia"),
 }
 
 GRADE_THRESHOLDS = [
@@ -743,10 +764,14 @@ def run_test(
 def list_targets() -> None:
     print("\nAvailable --target presets:\n")
     groups = [
-        ("Global / anycast", ["google", "cloudflare", "opendns"]),
-        ("Europe",           ["amsterdam", "frankfurt", "london", "paris", "sofia", "bucharest"]),
-        ("Turkey",           ["istanbul", "ist-ix", "turkey-cf", "turkey-google"]),
-        ("Middle East",      ["dubai"]),
+        ("Global / anycast",      ["cloudflare", "google", "quad9", "opendns"]),
+        ("Western Europe",        ["amsterdam", "frankfurt", "london", "paris", "madrid", "milan", "zurich", "lisbon", "brussels"]),
+        ("Northern Europe",       ["stockholm", "helsinki", "oslo", "copenhagen"]),
+        ("Eastern/Central Europe",["warsaw", "prague", "vienna", "budapest", "sofia", "bucharest"]),
+        ("Turkey",                ["istanbul", "ist-ix"]),
+        ("Middle East",           ["dubai"]),
+        ("North America",         ["newyork", "ashburn"]),
+        ("Asia Pacific",          ["singapore", "tokyo", "sydney"]),
     ]
     for group_name, keys in groups:
         print(f"  {group_name}:")
