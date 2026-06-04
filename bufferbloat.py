@@ -36,7 +36,8 @@ def _bootstrap():
 
     _os.execv(str(python), [str(python)] + sys.argv)
 
-_bootstrap()
+if __name__ == "__main__":
+    _bootstrap()
 # ─────────────────────────────────────────────────────────────────────────────
 
 import argparse
@@ -1117,6 +1118,13 @@ canvas { width: 100%; border-radius: 8px; background: #fafbfc;
              font-size: 0.9em; margin-bottom: 16px; }
 .error-msg.visible { display: block; }
 
+.field-hint { font-size: 0.8em; color: var(--muted); margin-top: 4px; min-height: 1.2em; }
+details summary { font-size: 0.82em; font-weight: 600; color: var(--muted);
+                  text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer;
+                  user-select: none; padding: 4px 0; }
+details summary:hover { color: var(--navy); }
+.adv-inner { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+
 @media (max-width: 560px) {
   .form-grid { grid-template-columns: 1fr; }
   .header { padding: 14px 18px; }
@@ -1141,23 +1149,11 @@ canvas { width: 100%; border-radius: 8px; background: #fafbfc;
   <!-- Config card (idle) -->
   <div class="card config-card">
     <div class="form-grid">
-      <div class="form-group full">
-        <label>Ping Target</label>
-        <select id="targetSelect"></select>
-      </div>
 
-      <div class="form-group">
-        <label>Load Server</label>
-        <div class="radio-group">
-          <label class="radio-option">
-            <input type="radio" name="server" value="cloudflare" checked>
-            <span>Cloudflare (anycast)</span>
-          </label>
-          <label class="radio-option">
-            <input type="radio" name="server" value="ovh">
-            <span>OVH (France)</span>
-          </label>
-        </div>
+      <div class="form-group full">
+        <label>Test Target</label>
+        <select id="targetSelect" onchange="updatePingHint()"></select>
+        <div class="field-hint" id="pingHint"></div>
       </div>
 
       <div class="form-group">
@@ -1169,15 +1165,41 @@ canvas { width: 100%; border-radius: 8px; background: #fafbfc;
         </div>
       </div>
 
-      <div class="form-group full">
+      <div class="form-group">
         <label>Upload test</label>
         <div class="toggle-row">
           <label class="toggle">
             <input type="checkbox" id="uploadToggle" checked>
             <span class="slider-sw"></span>
           </label>
-          <span class="toggle-label">Include upload and bidirectional phases</span>
+          <span class="toggle-label">Include upload &amp; bidirectional</span>
         </div>
+      </div>
+
+      <div class="form-group full adv-group">
+        <details>
+          <summary>Advanced options</summary>
+          <div class="adv-inner">
+            <div class="form-group">
+              <label>Load server</label>
+              <div class="radio-group">
+                <label class="radio-option">
+                  <input type="radio" name="server" value="cloudflare" checked>
+                  <span>Cloudflare (anycast)</span>
+                </label>
+                <label class="radio-option">
+                  <input type="radio" name="server" value="ovh">
+                  <span>OVH (France)</span>
+                </label>
+              </div>
+            </div>
+            <div class="form-group" style="margin-top:14px">
+              <label>Custom ping host <span style="font-weight:400;text-transform:none">(overrides target)</span></label>
+              <input type="text" id="customPingHost" placeholder="e.g. 192.168.1.1 or 1.1.1.1"
+                     style="padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:.95em;width:100%">
+            </div>
+          </div>
+        </details>
       </div>
 
       <div class="form-group full">
@@ -1211,9 +1233,10 @@ canvas { width: 100%; border-radius: 8px; background: #fafbfc;
   </div>
 </div>
 
+<script id="targets-data" type="application/json">{{ targets_json|safe }}</script>
 <script>
 // ── Target population ──────────────────────────────────────────────────────
-const TARGETS = {{ targets_json }};
+const TARGETS = JSON.parse(document.getElementById('targets-data').textContent);
 const GROUPS = [
   ["Global / anycast",       ["cloudflare","google","quad9","opendns"]],
   ["Western Europe",         ["amsterdam","frankfurt","london","paris","madrid","milan","zurich","lisbon","brussels"]],
@@ -1240,7 +1263,19 @@ const GROUPS = [
     });
     sel.appendChild(og);
   });
+  updatePingHint();
 })();
+
+function updatePingHint() {
+  const k = document.getElementById('targetSelect').value;
+  const hint = document.getElementById('pingHint');
+  if (TARGETS[k]) {
+    const [ip, desc] = TARGETS[k];
+    hint.textContent = 'Pinging ' + ip + ' — ' + desc;
+  } else {
+    hint.textContent = '';
+  }
+}
 
 // ── Chart ──────────────────────────────────────────────────────────────────
 const canvas = document.getElementById('rttCanvas');
@@ -1338,6 +1373,7 @@ function startTest() {
   const server = document.querySelector('input[name=server]:checked').value;
   const duration = parseInt(document.getElementById('durationSlider').value);
   const noUpload = !document.getElementById('uploadToggle').checked;
+  const customPing = document.getElementById('customPingHost').value.trim();
 
   document.getElementById('startBtn').disabled = true;
   document.getElementById('errorMsg').classList.remove('visible');
@@ -1352,7 +1388,7 @@ function startTest() {
   fetch('/start', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({target, server, duration, no_upload: noUpload})
+    body: JSON.stringify({target, server, duration, no_upload: noUpload, custom_ping: customPing})
   }).then(r => {
     if (!r.ok) return r.json().then(d => { throw new Error(d.error || 'Start failed'); });
     return r.json();
@@ -1535,12 +1571,16 @@ def create_app():
                 return jsonify({"error": f"Unknown server: {server_key}"}), 400
             dl_url, ul_url, extra_headers, server_desc = SERVERS[server_key]
 
-            if target_key in TARGETS:
+            custom_ping = (data.get("custom_ping") or "").strip()
+            if custom_ping:
+                ping_host = custom_ping
+                ping_label = custom_ping
+            elif target_key in TARGETS:
                 ping_host, ping_label = TARGETS[target_key]
                 ping_label = f"{target_key} ({ping_label})"
             else:
-                ping_host = "8.8.8.8"
-                ping_label = ping_host
+                ping_host = "1.1.1.1"
+                ping_label = "cloudflare (1.1.1.1)"
 
             _session = TestSession(id=str(_uuid.uuid4()), running=True)
             params = dict(duration=duration, ping_host=ping_host, ping_label=ping_label,
