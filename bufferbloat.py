@@ -1,6 +1,44 @@
 #!/usr/bin/env python3
 """Bufferbloat measurement tool — measures latency under load."""
 
+# ─── Auto-venv bootstrap ──────────────────────────────────────────────────────
+# If not already running inside a virtual environment, create one next to this
+# script, install required packages into it, and re-launch automatically.
+import sys, os as _os
+
+def _bootstrap():
+    if sys.prefix != sys.base_prefix:
+        return  # already in a venv
+
+    import subprocess, pathlib
+    script = pathlib.Path(__file__).resolve()
+    venv_dir = script.parent / ".venv"
+    pip = venv_dir / ("Scripts" if sys.platform == "win32" else "bin") / "pip"
+    python = venv_dir / ("Scripts" if sys.platform == "win32" else "bin") / "python"
+
+    if not venv_dir.exists():
+        print("Bufferbloat requires matplotlib and flask.")
+        print(f"A virtual environment will be created at: {venv_dir}")
+        try:
+            answer = input("Set up automatically? [Y/n]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print("\nAborted.")
+            sys.exit(0)
+        if answer not in ("", "y", "yes"):
+            print("\nManual install: pip install matplotlib flask")
+            print("Or activate your own venv first, then re-run.")
+            sys.exit(0)
+        print("Creating virtual environment...", flush=True)
+        subprocess.check_call([sys.executable, "-m", "venv", str(venv_dir)])
+        print("Installing dependencies...", flush=True)
+        subprocess.check_call([str(pip), "install", "--quiet", "matplotlib", "flask"])
+        print("Setup complete.\n", flush=True)
+
+    _os.execv(str(python), [str(python)] + sys.argv)
+
+_bootstrap()
+# ─────────────────────────────────────────────────────────────────────────────
+
 import argparse
 import base64
 import io
