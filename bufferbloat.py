@@ -4,8 +4,10 @@
 import argparse
 import base64
 import io
+import json
 import os
 import platform
+import queue as _queue
 import random
 import re
 import subprocess
@@ -13,6 +15,8 @@ import sys
 import threading
 import time
 import urllib.request
+import uuid as _uuid
+import webbrowser
 from dataclasses import dataclass, field
 from datetime import datetime
 from statistics import median
@@ -107,6 +111,7 @@ GRADE_THRESHOLDS = [
 GRADE_COLORS = {"A": "#2ecc71", "B": "#f1c40f", "C": "#e67e22", "D": "#e74c3c", "F": "#8e44ad"}
 
 IS_MACOS = platform.system() == "Darwin"
+IS_WINDOWS = platform.system() == "Windows"
 
 
 # ─── Data structures ──────────────────────────────────────────────────────────
@@ -208,7 +213,9 @@ class PhaseResult:
 
 def ping_once(host: str) -> Optional[float]:
     """Return RTT in ms, or None on failure."""
-    if IS_MACOS:
+    if IS_WINDOWS:
+        cmd = ["ping", "-n", "1", "-w", "1000", host]
+    elif IS_MACOS:
         cmd = ["ping", "-c", "1", "-W", "1000", host]
     else:
         cmd = ["ping", "-c", "1", "-W", "1", host]
@@ -231,18 +238,21 @@ def measure_phase(
     ping_host: str,
     verbose: bool,
     stop_event: threading.Event,
+    event_callback=None,
 ) -> None:
     """Ping once per second for `duration` seconds, storing results in phase."""
     phase.start_time = time.time()
     deadline = phase.start_time + duration
+    seq = 0
     while time.time() < deadline and not stop_event.is_set():
         tick = time.time()
         rtt = ping_once(ping_host)
         phase.rtts.append(rtt)
         label = f"{rtt:.1f} ms" if rtt is not None else "timeout"
         print(f"  [{phase.name}] RTT: {label}", flush=True)
-        if verbose and rtt is not None:
-            pass  # already printed above
+        if event_callback:
+            event_callback({"type": "rtt", "phase": phase.name, "rtt": rtt, "seq": seq})
+        seq += 1
         elapsed = time.time() - tick
         sleep_for = max(0.0, 1.0 - elapsed)
         stop_event.wait(sleep_for)
@@ -676,6 +686,7 @@ def run_test(
     dl_url: str,
     ul_url: str,
     extra_headers: dict,
+    event_callback=None,
 ) -> tuple:
     stop_event = threading.Event()
 
@@ -709,13 +720,18 @@ def run_test(
             print(f"  Loading: {', '.join(dirs)}")
         print(f"{'─'*50}")
 
+        if event_callback:
+            event_callback({"type": "phase_start", "phase": name, "index": i,
+                            "total": len(phases_to_run), "duration": phase_duration,
+                            "load": {"dl": dl, "ul": ul}})
+
         phase = PhaseResult(name=name)
         tracker = SpeedTracker()
         stop_load = threading.Event()
         load_threads = start_load(dl, ul, stop_load, tracker, dl_url, ul_url, extra_headers)
 
         measure_stop = threading.Event()
-        measure_phase(phase, phase_duration, ping_host, verbose, measure_stop)
+        measure_phase(phase, phase_duration, ping_host, verbose, measure_stop, event_callback)
 
         stop_load.set()
         for t in load_threads:
@@ -734,6 +750,15 @@ def run_test(
                 )
         elif name != "Recovery":
             loaded_phases.append(phase)
+
+        if event_callback and name != "Recovery":
+            s2 = phase.stats()
+            event_callback({"type": "phase_complete", "phase": name,
+                            "stats": s2,
+                            "bloat": phase.bloat(baseline) if baseline and phase is not baseline else None,
+                            "grade": phase.grade(baseline) if baseline and phase is not baseline else None,
+                            "loss": phase.packet_loss(),
+                            "dl_mbps": phase.dl_mbps(), "ul_mbps": phase.ul_mbps()})
 
         s = phase.stats()
         loss = phase.packet_loss()
@@ -808,7 +833,24 @@ def main():
                         help="Skip upload phases (useful on networks that block outbound POST)")
     parser.add_argument("--verbose", action="store_true",
                         help="Print each RTT value as it is collected")
+    parser.add_argument("--gui", action="store_true",
+                        help="Launch browser-based GUI (requires: pip install flask)")
+    parser.add_argument("--port", type=int, default=5757,
+                        help="Port for --gui web server (default: 5757)")
     args = parser.parse_args()
+
+    if args.gui:
+        try:
+            import flask  # noqa: F401
+        except ImportError:
+            print("Flask is required for --gui mode.\nInstall with: pip install flask")
+            sys.exit(1)
+        app = create_app()
+        url = f"http://127.0.0.1:{args.port}"
+        print(f"Starting GUI at {url} — opening browser...")
+        threading.Timer(1.2, lambda: webbrowser.open(url)).start()
+        app.run(host="127.0.0.1", port=args.port, debug=False, threaded=True, use_reloader=False)
+        sys.exit(0)
 
     if args.list_targets:
         list_targets()
@@ -866,6 +908,643 @@ def main():
     ping_label = f"{args.target} ({target_label})" if target_label else ping_host
     html = build_html(baseline, loaded_phases, timestamp, total_duration, ping_label, server_desc)
     save_report(html, args.output)
+
+
+# ─── GUI (Flask web interface) ────────────────────────────────────────────────
+
+@dataclass
+class TestSession:
+    id: str = ""
+    running: bool = False
+    event_queue: object = field(default_factory=_queue.Queue)
+    report_html: str = ""
+
+_session = TestSession()
+_session_lock = threading.Lock()
+
+GUI_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bufferbloat Test</title>
+<style>
+:root {
+  --navy: #2c3e50;
+  --navy-light: #34495e;
+  --bg: #f0f2f5;
+  --card: #ffffff;
+  --text: #2c3e50;
+  --muted: #7f8c8d;
+  --border: #dde1e7;
+  --grade-a: #2ecc71;
+  --grade-b: #f1c40f;
+  --grade-c: #e67e22;
+  --grade-d: #e74c3c;
+  --grade-f: #8e44ad;
+  --radius: 12px;
+  --shadow: 0 2px 12px rgba(0,0,0,0.08);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+       background: var(--bg); color: var(--text); min-height: 100vh; }
+
+/* Header */
+.header { background: var(--navy); color: white; padding: 18px 32px;
+          display: flex; align-items: center; gap: 12px; }
+.header h1 { font-size: 1.3em; font-weight: 600; letter-spacing: 0.5px; }
+.header .subtitle { font-size: 0.82em; opacity: 0.65; margin-top: 2px; }
+
+/* Main layout */
+.main { max-width: 780px; margin: 0 auto; padding: 32px 20px; }
+
+/* Cards */
+.card { background: var(--card); border-radius: var(--radius);
+        box-shadow: var(--shadow); padding: 28px; margin-bottom: 20px; }
+
+/* Form */
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.form-group { display: flex; flex-direction: column; gap: 7px; }
+.form-group.full { grid-column: 1 / -1; }
+label { font-size: 0.82em; font-weight: 600; color: var(--muted);
+        text-transform: uppercase; letter-spacing: 0.5px; }
+select, input[type=range] { width: 100%; }
+select { padding: 10px 12px; border: 1.5px solid var(--border);
+         border-radius: 8px; font-size: 0.95em; background: white;
+         color: var(--text); appearance: none;
+         background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%237f8c8d' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+         background-repeat: no-repeat; background-position: right 12px center;
+         padding-right: 32px; cursor: pointer; }
+select:focus { outline: none; border-color: var(--navy); }
+
+input[type=range] { -webkit-appearance: none; height: 6px;
+                    border-radius: 3px; background: var(--border); cursor: pointer; }
+input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
+  width: 18px; height: 18px; border-radius: 50%; background: var(--navy); cursor: pointer; }
+.range-row { display: flex; align-items: center; gap: 12px; }
+.range-row input { flex: 1; }
+.range-val { font-size: 0.95em; font-weight: 600; color: var(--navy);
+             min-width: 36px; text-align: right; }
+
+/* Toggle switch */
+.toggle-row { display: flex; align-items: center; gap: 12px; padding: 4px 0; }
+.toggle { position: relative; width: 44px; height: 24px; flex-shrink: 0; }
+.toggle input { opacity: 0; width: 0; height: 0; }
+.slider-sw { position: absolute; inset: 0; background: var(--border);
+             border-radius: 24px; cursor: pointer; transition: .25s; }
+.slider-sw:before { content: ""; position: absolute; width: 18px; height: 18px;
+                    left: 3px; bottom: 3px; background: white; border-radius: 50%;
+                    transition: .25s; }
+input:checked + .slider-sw { background: var(--navy); }
+input:checked + .slider-sw:before { transform: translateX(20px); }
+.toggle-label { font-size: 0.92em; color: var(--text); }
+
+/* Radio group */
+.radio-group { display: flex; gap: 12px; }
+.radio-option { display: flex; align-items: center; gap: 7px;
+                padding: 9px 16px; border: 1.5px solid var(--border);
+                border-radius: 8px; cursor: pointer; flex: 1;
+                transition: border-color .15s, background .15s; }
+.radio-option:has(input:checked) { border-color: var(--navy); background: #f0f4f8; }
+.radio-option input { accent-color: var(--navy); }
+.radio-option span { font-size: 0.9em; font-weight: 500; }
+
+/* Start button */
+.btn-start { width: 100%; padding: 16px; background: var(--navy); color: white;
+             border: none; border-radius: 10px; font-size: 1.05em; font-weight: 600;
+             cursor: pointer; letter-spacing: 0.5px; transition: background .15s;
+             margin-top: 4px; }
+.btn-start:hover { background: var(--navy-light); }
+.btn-start:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Phase indicator */
+.phase-indicator { display: none; }
+.body-running .phase-indicator { display: block; }
+.phase-name { font-size: 1.1em; font-weight: 600; margin-bottom: 10px; }
+.phase-meta { font-size: 0.85em; color: var(--muted); margin-bottom: 14px; }
+.progress-bar { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+.progress-fill { height: 100%; background: var(--navy); border-radius: 3px;
+                 transition: width 0.9s linear; width: 0%; }
+
+/* Canvas chart */
+.chart-wrap { display: none; margin-top: 20px; }
+.body-running .chart-wrap { display: block; }
+canvas { width: 100%; border-radius: 8px; background: #fafbfc;
+         border: 1px solid var(--border); display: block; }
+
+/* Phase cards */
+.phase-cards { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
+.phase-card { display: flex; align-items: center; justify-content: space-between;
+              padding: 12px 16px; background: var(--bg); border-radius: 8px;
+              border: 1px solid var(--border); animation: fadeIn .3s ease; }
+.phase-card .pc-name { font-weight: 600; font-size: 0.9em; }
+.phase-card .pc-stats { font-size: 0.82em; color: var(--muted); margin-top: 2px; }
+.phase-card .pc-grade { font-size: 1.3em; font-weight: 700; margin-left: 16px; flex-shrink: 0; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; } }
+
+/* Done section */
+.done-section { display: none; text-align: center; }
+.body-done .done-section { display: block; }
+.body-done .config-card { display: none; }
+.grade-circle { width: 120px; height: 120px; border-radius: 50%;
+                display: flex; align-items: center; justify-content: center;
+                font-size: 3em; font-weight: 700; color: white;
+                margin: 0 auto 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.15); }
+.done-interp { font-size: 0.95em; line-height: 1.65; color: var(--text);
+               max-width: 560px; margin: 0 auto 24px; }
+.done-buttons { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+.btn { padding: 11px 24px; border-radius: 8px; font-size: 0.92em; font-weight: 600;
+       cursor: pointer; border: none; transition: opacity .15s; }
+.btn:hover { opacity: 0.85; }
+.btn-primary { background: var(--navy); color: white; }
+.btn-secondary { background: var(--border); color: var(--text); }
+
+/* Warning banner */
+.warning-banner { display: none; background: #fef9e7;
+                  border-left: 4px solid #f39c12; border-radius: 0 8px 8px 0;
+                  padding: 14px 18px; margin-bottom: 16px; font-size: 0.88em;
+                  line-height: 1.6; }
+.warning-banner.visible { display: block; }
+.warning-banner strong { color: #d68910; }
+
+/* Report iframe */
+.report-frame { display: none; width: 100%; height: 700px; border: none;
+                border-radius: var(--radius); box-shadow: var(--shadow);
+                margin-top: 20px; }
+.report-frame.visible { display: block; }
+
+/* Error */
+.error-msg { display: none; background: #fdecea; border-left: 4px solid #e74c3c;
+             border-radius: 0 8px 8px 0; padding: 14px 18px; color: #c0392b;
+             font-size: 0.9em; margin-bottom: 16px; }
+.error-msg.visible { display: block; }
+
+@media (max-width: 560px) {
+  .form-grid { grid-template-columns: 1fr; }
+  .header { padding: 14px 18px; }
+  .main { padding: 20px 14px; }
+  .card { padding: 20px; }
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <h1>Bufferbloat Test</h1>
+    <div class="subtitle">Measure latency under load &mdash; detect bufferbloat</div>
+  </div>
+</div>
+
+<div class="main">
+  <div id="errorMsg" class="error-msg"></div>
+  <div id="warningBanner" class="warning-banner"></div>
+
+  <!-- Config card (idle) -->
+  <div class="card config-card">
+    <div class="form-grid">
+      <div class="form-group full">
+        <label>Ping Target</label>
+        <select id="targetSelect"></select>
+      </div>
+
+      <div class="form-group">
+        <label>Load Server</label>
+        <div class="radio-group">
+          <label class="radio-option">
+            <input type="radio" name="server" value="cloudflare" checked>
+            <span>Cloudflare (anycast)</span>
+          </label>
+          <label class="radio-option">
+            <input type="radio" name="server" value="ovh">
+            <span>OVH (France)</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Duration per phase</label>
+        <div class="range-row">
+          <input type="range" id="durationSlider" min="5" max="60" value="10"
+                 oninput="document.getElementById('durationVal').textContent=this.value+'s'">
+          <span class="range-val" id="durationVal">10s</span>
+        </div>
+      </div>
+
+      <div class="form-group full">
+        <label>Upload test</label>
+        <div class="toggle-row">
+          <label class="toggle">
+            <input type="checkbox" id="uploadToggle" checked>
+            <span class="slider-sw"></span>
+          </label>
+          <span class="toggle-label">Include upload and bidirectional phases</span>
+        </div>
+      </div>
+
+      <div class="form-group full">
+        <button class="btn-start" id="startBtn" onclick="startTest()">Start Test</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Live phase indicator (running) -->
+  <div class="card phase-indicator" id="phaseIndicator">
+    <div class="phase-name" id="phaseName">Initializing...</div>
+    <div class="phase-meta" id="phaseMeta"></div>
+    <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+    <div class="phase-cards" id="phaseCards"></div>
+  </div>
+
+  <!-- Live RTT chart (running) -->
+  <div class="card chart-wrap">
+    <canvas id="rttCanvas" height="200"></canvas>
+  </div>
+
+  <!-- Done section -->
+  <div class="card done-section" id="doneSection">
+    <div class="grade-circle" id="gradeCircle">?</div>
+    <p class="done-interp" id="doneInterp"></p>
+    <div class="done-buttons">
+      <button class="btn btn-primary" onclick="downloadReport()">Download Report</button>
+      <button class="btn btn-secondary" onclick="runAgain()">Run Again</button>
+    </div>
+    <iframe id="reportFrame" class="report-frame"></iframe>
+  </div>
+</div>
+
+<script>
+// ── Target population ──────────────────────────────────────────────────────
+const TARGETS = {{ targets_json }};
+const GROUPS = [
+  ["Global / anycast",       ["cloudflare","google","quad9","opendns"]],
+  ["Western Europe",         ["amsterdam","frankfurt","london","paris","madrid","milan","zurich","lisbon","brussels"]],
+  ["Northern Europe",        ["stockholm","helsinki","oslo","copenhagen"]],
+  ["Eastern/Central Europe", ["warsaw","prague","vienna","budapest","sofia","bucharest"]],
+  ["Turkey",                 ["istanbul","ist-ix"]],
+  ["Middle East",            ["dubai"]],
+  ["North America",          ["newyork","ashburn"]],
+  ["Asia Pacific",           ["singapore","tokyo","sydney"]],
+];
+(function populateTargets() {
+  const sel = document.getElementById('targetSelect');
+  GROUPS.forEach(([groupName, keys]) => {
+    const og = document.createElement('optgroup');
+    og.label = groupName;
+    keys.forEach(k => {
+      if (!TARGETS[k]) return;
+      const [ip, desc] = TARGETS[k];
+      const opt = document.createElement('option');
+      opt.value = k;
+      opt.textContent = k + ' — ' + desc;
+      if (k === 'cloudflare') opt.selected = true;
+      og.appendChild(opt);
+    });
+    sel.appendChild(og);
+  });
+})();
+
+// ── Chart ──────────────────────────────────────────────────────────────────
+const canvas = document.getElementById('rttCanvas');
+const ctx = canvas.getContext('2d');
+const GRADE_COLORS = {A:'#2ecc71',B:'#f1c40f',C:'#e67e22',D:'#e74c3c',F:'#8e44ad'};
+const PHASE_COLORS = ['#3498db','#e74c3c','#2ecc71','#9b59b6','#f39c12'];
+
+let chartData = []; // [{rtt, phaseIdx, phaseName}]
+let phaseNames = [];
+let phaseStarts = []; // chartData index where each phase starts
+
+function resizeCanvas() {
+  canvas.width = canvas.offsetWidth * window.devicePixelRatio;
+  canvas.height = 200 * window.devicePixelRatio;
+  drawChart();
+}
+
+function drawChart() {
+  const w = canvas.width, h = canvas.height;
+  const dpr = window.devicePixelRatio || 1;
+  ctx.clearRect(0, 0, w, h);
+
+  if (chartData.length === 0) return;
+
+  const validRtts = chartData.filter(d => d.rtt !== null).map(d => d.rtt);
+  const maxRtt = validRtts.length ? Math.max(...validRtts) * 1.15 : 200;
+  const pad = {top: 20*dpr, right: 20*dpr, bottom: 30*dpr, left: 50*dpr};
+  const pw = w - pad.left - pad.right;
+  const ph = h - pad.top - pad.bottom;
+
+  // Grid lines
+  ctx.strokeStyle = '#e8eaed'; ctx.lineWidth = dpr;
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.top + (ph * i / 4);
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(w - pad.right, y); ctx.stroke();
+    ctx.fillStyle = '#95a5a6'; ctx.font = (10*dpr)+'px sans-serif'; ctx.textAlign = 'right';
+    ctx.fillText(Math.round(maxRtt * (1 - i/4)) + 'ms', pad.left - 6*dpr, y + 4*dpr);
+  }
+
+  const total = chartData.length;
+  const xOf = i => pad.left + (i / Math.max(total - 1, 1)) * pw;
+  const yOf = rtt => rtt === null ? pad.top : pad.top + ph * (1 - Math.min(rtt, maxRtt) / maxRtt);
+
+  // Phase boundary lines
+  phaseStarts.forEach((si, pi) => {
+    if (pi === 0) return;
+    const x = xOf(si);
+    ctx.strokeStyle = '#bdc3c7'; ctx.lineWidth = dpr;
+    ctx.setLineDash([4*dpr, 4*dpr]);
+    ctx.beginPath(); ctx.moveTo(x, pad.top); ctx.lineTo(x, h - pad.bottom); ctx.stroke();
+    ctx.setLineDash([]);
+    // Phase label
+    if (phaseNames[pi]) {
+      ctx.fillStyle = '#7f8c8d'; ctx.font = (9*dpr)+'px sans-serif'; ctx.textAlign = 'left';
+      ctx.fillText(phaseNames[pi], x + 3*dpr, pad.top - 4*dpr);
+    }
+  });
+
+  // Lines per phase
+  let prevX = null, prevY = null, prevPhase = null;
+  chartData.forEach((d, i) => {
+    const x = xOf(i);
+    const y = yOf(d.rtt);
+    const color = PHASE_COLORS[d.phaseIdx % PHASE_COLORS.length];
+    if (d.rtt === null) {
+      // Timeout: red X
+      ctx.strokeStyle = '#e74c3c'; ctx.lineWidth = 1.5*dpr;
+      const s = 5*dpr;
+      const ty = pad.top + ph * 0.1;
+      ctx.beginPath(); ctx.moveTo(x-s, ty-s); ctx.lineTo(x+s, ty+s); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x+s, ty-s); ctx.lineTo(x-s, ty+s); ctx.stroke();
+      prevX = null; prevY = null;
+      return;
+    }
+    if (prevX !== null && prevPhase === d.phaseIdx) {
+      ctx.strokeStyle = color; ctx.lineWidth = 2*dpr; ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(prevX, prevY); ctx.lineTo(x, y); ctx.stroke();
+    }
+    ctx.fillStyle = color;
+    ctx.beginPath(); ctx.arc(x, y, 3.5*dpr, 0, Math.PI*2); ctx.fill();
+    prevX = x; prevY = y; prevPhase = d.phaseIdx;
+  });
+}
+window.addEventListener('resize', resizeCanvas);
+
+// ── Test state ─────────────────────────────────────────────────────────────
+let currentPhaseIdx = -1;
+let progressTimer = null;
+let phaseStartTime = 0;
+let phaseDuration = 0;
+let es = null;
+
+function startTest() {
+  const target = document.getElementById('targetSelect').value;
+  const server = document.querySelector('input[name=server]:checked').value;
+  const duration = parseInt(document.getElementById('durationSlider').value);
+  const noUpload = !document.getElementById('uploadToggle').checked;
+
+  document.getElementById('startBtn').disabled = true;
+  document.getElementById('errorMsg').classList.remove('visible');
+  document.getElementById('warningBanner').classList.remove('visible');
+  document.body.className = 'body-running';
+
+  chartData = []; phaseNames = []; phaseStarts = [];
+  currentPhaseIdx = -1;
+  document.getElementById('phaseCards').innerHTML = '';
+  resizeCanvas();
+
+  fetch('/start', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({target, server, duration, no_upload: noUpload})
+  }).then(r => {
+    if (!r.ok) return r.json().then(d => { throw new Error(d.error || 'Start failed'); });
+    return r.json();
+  }).then(() => {
+    es = new EventSource('/stream');
+    es.onmessage = handleEvent;
+    es.onerror = () => showError('Connection to test server lost.');
+  }).catch(err => showError(err.message));
+}
+
+function handleEvent(e) {
+  const msg = JSON.parse(e.data);
+  if (msg.type === 'phase_start') {
+    currentPhaseIdx++;
+    phaseNames.push(msg.phase);
+    phaseStarts.push(chartData.length);
+    phaseDuration = msg.duration;
+    phaseStartTime = Date.now();
+    document.getElementById('phaseName').textContent =
+      'Phase ' + (msg.index+1) + '/' + msg.total + ': ' + msg.phase;
+    const dirs = [];
+    if (msg.load.dl) dirs.push('download');
+    if (msg.load.ul) dirs.push('upload');
+    document.getElementById('phaseMeta').textContent =
+      dirs.length ? 'Load: ' + dirs.join(' + ') : 'No load (measuring baseline)';
+    clearInterval(progressTimer);
+    progressTimer = setInterval(() => {
+      const pct = Math.min(100, (Date.now() - phaseStartTime) / (phaseDuration * 1000) * 100);
+      document.getElementById('progressFill').style.width = pct + '%';
+      if (pct >= 100) clearInterval(progressTimer);
+    }, 200);
+  } else if (msg.type === 'rtt') {
+    chartData.push({rtt: msg.rtt, phaseIdx: currentPhaseIdx, phaseName: msg.phase});
+    drawChart();
+  } else if (msg.type === 'phase_complete' && msg.phase !== 'Recovery') {
+    const card = document.createElement('div');
+    card.className = 'phase-card';
+    const grade = msg.grade || '—';
+    const gradeColor = GRADE_COLORS[grade] || '#7f8c8d';
+    const median = msg.stats ? msg.stats.median.toFixed(1) + 'ms' : '—';
+    const bloat = msg.bloat != null ? (msg.bloat >= 0 ? '+' : '') + msg.bloat.toFixed(1) + 'ms' : '—';
+    const loss = msg.loss > 0 ? ' · loss ' + msg.loss.toFixed(0) + '%' : '';
+    const dl = msg.dl_mbps ? ' · ↓' + msg.dl_mbps.toFixed(1) + ' Mbps' : '';
+    const ul = msg.ul_mbps ? ' · ↑' + msg.ul_mbps.toFixed(1) + ' Mbps' : '';
+    card.innerHTML = `
+      <div>
+        <div class="pc-name">${msg.phase}</div>
+        <div class="pc-stats">median ${median} · bloat ${bloat}${loss}${dl}${ul}</div>
+      </div>
+      <div class="pc-grade" style="color:${gradeColor}">${grade}</div>`;
+    document.getElementById('phaseCards').appendChild(card);
+  } else if (msg.type === 'warning') {
+    const b = document.getElementById('warningBanner');
+    b.innerHTML = '<strong>&#9888; ' + msg.title + '</strong><br>' + msg.message;
+    b.classList.add('visible');
+  } else if (msg.type === 'done') {
+    clearInterval(progressTimer);
+    document.getElementById('progressFill').style.width = '100%';
+    es.close();
+    showDone(msg);
+  } else if (msg.type === 'error') {
+    es.close();
+    showError(msg.message);
+  }
+}
+
+function showDone(msg) {
+  document.body.className = 'body-running body-done';
+  const gc = document.getElementById('gradeCircle');
+  gc.textContent = msg.grade;
+  gc.style.background = GRADE_COLORS[msg.grade] || '#7f8c8d';
+  document.getElementById('doneInterp').textContent = msg.interpretation;
+  const frame = document.getElementById('reportFrame');
+  frame.src = '/report';
+  frame.classList.add('visible');
+}
+
+function showError(msg) {
+  document.body.className = '';
+  document.getElementById('startBtn').disabled = false;
+  const el = document.getElementById('errorMsg');
+  el.textContent = 'Error: ' + msg;
+  el.classList.add('visible');
+}
+
+function downloadReport() {
+  window.location.href = '/download';
+}
+
+function runAgain() {
+  document.body.className = '';
+  document.getElementById('startBtn').disabled = false;
+  document.getElementById('reportFrame').classList.remove('visible');
+  document.getElementById('reportFrame').src = '';
+  document.getElementById('warningBanner').classList.remove('visible');
+  document.getElementById('phaseCards').innerHTML = '';
+  chartData = []; phaseNames = []; phaseStarts = [];
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+}
+</script>
+</body>
+</html>"""
+
+
+def _gui_run_test(params: dict, session: TestSession) -> None:
+    try:
+        def cb(event: dict) -> None:
+            session.event_queue.put(event)
+
+        baseline, loaded_phases, all_results, total_duration = run_test(
+            duration=params["duration"],
+            ping_host=params["ping_host"],
+            no_upload=params["no_upload"],
+            verbose=False,
+            dl_url=params["dl_url"],
+            ul_url=params["ul_url"],
+            extra_headers=params["extra_headers"],
+            event_callback=cb,
+        )
+
+        if baseline and baseline.packet_loss() >= 5:
+            session.event_queue.put({
+                "type": "warning",
+                "title": f"High baseline packet loss ({baseline.packet_loss():.0f}%)",
+                "message": (
+                    "Packet loss was detected before any load was applied. "
+                    "This usually indicates unstable Wi-Fi or a congested local network. "
+                    "Results may reflect local instability rather than WAN bufferbloat. "
+                    "Try testing over a wired connection for accurate results."
+                ),
+            })
+
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        ping_label = params.get("ping_label", params["ping_host"])
+        server_desc = params.get("server_desc", "")
+        html = build_html(baseline, loaded_phases, timestamp, total_duration, ping_label, server_desc)
+        session.report_html = html
+        grade = overall_grade(loaded_phases, baseline)
+        session.event_queue.put({
+            "type": "done",
+            "grade": grade,
+            "grade_color": GRADE_COLORS.get(grade, "#7f8c8d"),
+            "interpretation": interpretation(loaded_phases, baseline),
+        })
+    except Exception as exc:
+        session.event_queue.put({"type": "error", "message": str(exc)})
+    finally:
+        session.running = False
+
+
+def create_app():
+    from flask import Flask, Response, request, jsonify, render_template_string
+    from flask import stream_with_context, make_response
+
+    app = Flask(__name__)
+    app.logger.disabled = True
+    import logging
+    log = logging.getLogger('werkzeug')
+    log.setLevel(logging.ERROR)
+
+    targets_json = json.dumps({k: list(v) for k, v in TARGETS.items()})
+
+    @app.get("/")
+    def index():
+        return render_template_string(GUI_TEMPLATE, targets_json=targets_json)
+
+    @app.post("/start")
+    def start():
+        global _session
+        with _session_lock:
+            if _session.running:
+                return jsonify({"error": "A test is already running"}), 409
+            data = request.get_json() or {}
+            target_key = data.get("target", "cloudflare")
+            server_key = data.get("server", "cloudflare")
+            duration = max(5, min(60, int(data.get("duration", 10))))
+            no_upload = bool(data.get("no_upload", False))
+
+            if server_key not in SERVERS:
+                return jsonify({"error": f"Unknown server: {server_key}"}), 400
+            dl_url, ul_url, extra_headers, server_desc = SERVERS[server_key]
+
+            if target_key in TARGETS:
+                ping_host, ping_label = TARGETS[target_key]
+                ping_label = f"{target_key} ({ping_label})"
+            else:
+                ping_host = "8.8.8.8"
+                ping_label = ping_host
+
+            _session = TestSession(id=str(_uuid.uuid4()), running=True)
+            params = dict(duration=duration, ping_host=ping_host, ping_label=ping_label,
+                          no_upload=no_upload, dl_url=dl_url, ul_url=ul_url,
+                          extra_headers=extra_headers, server_desc=server_desc)
+            threading.Thread(target=_gui_run_test, args=(params, _session), daemon=True).start()
+        return jsonify({"ok": True})
+
+    @app.get("/stream")
+    def stream():
+        def generate():
+            q = _session.event_queue
+            while True:
+                try:
+                    event = q.get(timeout=30)
+                    yield f"data: {json.dumps(event)}\n\n"
+                    if event.get("type") in ("done", "error"):
+                        break
+                except _queue.Empty:
+                    yield ": keepalive\n\n"
+        return Response(
+            stream_with_context(generate()),
+            mimetype="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    @app.get("/report")
+    def report():
+        if not _session.report_html:
+            return "No report available yet", 404
+        return Response(_session.report_html, mimetype="text/html")
+
+    @app.get("/download")
+    def download():
+        if not _session.report_html:
+            return "No report available yet", 404
+        r = make_response(_session.report_html)
+        r.headers["Content-Type"] = "text/html"
+        r.headers["Content-Disposition"] = "attachment; filename=bufferbloat-report.html"
+        return r
+
+    return app
 
 
 if __name__ == "__main__":
