@@ -1,12 +1,24 @@
 # bufferbloat.py
 
-A command-line tool that measures **bufferbloat** — the latency spike your connection experiences when it's under load — and generates a self-contained HTML or PDF report with graphs.
+Measures **bufferbloat** — the latency spike your connection experiences when it's under load. Run it as a simple CLI command or launch the browser-based GUI. Generates a self-contained HTML or PDF report with graphs.
 
-## Web GUI
+## CLI mode
 
-![Bufferbloat GUI demo](demo.gif)
+```bash
+python3 bufferbloat.py --target cloudflare
+```
 
-Launch with `python3 bufferbloat.py --gui` — opens automatically in your browser.
+![CLI demo](demo-cli.gif)
+
+## Web GUI mode
+
+```bash
+python3 bufferbloat.py --gui
+```
+
+![Web GUI demo](demo.gif)
+
+Opens automatically in your browser — no extra setup beyond installing Flask.
 
 ## What is bufferbloat?
 
