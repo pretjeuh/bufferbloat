@@ -1106,11 +1106,6 @@ canvas { width: 100%; border-radius: 8px; background: #fafbfc;
 .warning-banner.visible { display: block; }
 .warning-banner strong { color: #d68910; }
 
-/* Report iframe */
-.report-frame { display: none; width: 100%; height: 700px; border: none;
-                border-radius: var(--radius); box-shadow: var(--shadow);
-                margin-top: 20px; }
-.report-frame.visible { display: block; }
 
 /* Error */
 .error-msg { display: none; background: #fdecea; border-left: 4px solid #e74c3c;
@@ -1226,10 +1221,10 @@ details summary:hover { color: var(--navy); }
     <div class="grade-circle" id="gradeCircle">?</div>
     <p class="done-interp" id="doneInterp"></p>
     <div class="done-buttons">
+      <button class="btn btn-primary" onclick="openReport()">Open Full Report</button>
       <button class="btn btn-primary" onclick="downloadReport()">Download Report</button>
       <button class="btn btn-secondary" onclick="runAgain()">Run Again</button>
     </div>
-    <iframe id="reportFrame" class="report-frame"></iframe>
   </div>
 </div>
 
@@ -1461,9 +1456,10 @@ function showDone(msg) {
   gc.textContent = msg.grade;
   gc.style.background = GRADE_COLORS[msg.grade] || '#7f8c8d';
   document.getElementById('doneInterp').textContent = msg.interpretation;
-  const frame = document.getElementById('reportFrame');
-  frame.src = '/report';
-  frame.classList.add('visible');
+}
+
+function openReport() {
+  window.open('/report', '_blank');
 }
 
 function showError(msg) {
@@ -1481,8 +1477,6 @@ function downloadReport() {
 function runAgain() {
   document.body.className = '';
   document.getElementById('startBtn').disabled = false;
-  document.getElementById('reportFrame').classList.remove('visible');
-  document.getElementById('reportFrame').src = '';
   document.getElementById('warningBanner').classList.remove('visible');
   document.getElementById('phaseCards').innerHTML = '';
   chartData = []; phaseNames = []; phaseStarts = [];
