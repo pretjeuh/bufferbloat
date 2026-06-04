@@ -2,6 +2,14 @@
 
 A command-line tool that measures **bufferbloat** — the latency spike your connection experiences when it's under load — and generates a self-contained HTML or PDF report with graphs.
 
+## Web GUI
+
+![Bufferbloat GUI — idle](screenshot-idle.png)
+
+![Bufferbloat GUI — live test with RTT chart and results](screenshot-running2.png)
+
+Launch with `python3 bufferbloat.py --gui` — opens automatically in your browser.
+
 ## What is bufferbloat?
 
 Bufferbloat happens when your router or modem has an oversized queue. Under load (downloading, uploading, or both), packets sit in that queue instead of being dropped or managed, causing latency to spike from a few ms to hundreds of ms. This kills video calls, gaming, and interactive traffic while someone else on the network is doing a large transfer.
