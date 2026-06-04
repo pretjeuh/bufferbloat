@@ -886,7 +886,8 @@ def main():
             sys.exit(1)
         app = create_app()
         url = f"http://127.0.0.1:{args.port}"
-        print(f"Starting GUI at {url} — opening browser...")
+        print(f"\nBufferbloat GUI running at {url}")
+        print("Opening browser... (press Ctrl+C here or click Quit in the browser to stop)\n")
         threading.Timer(1.2, lambda: webbrowser.open(url)).start()
         app.run(host="127.0.0.1", port=args.port, debug=False, threaded=True, use_reloader=False)
         sys.exit(0)
@@ -1097,6 +1098,7 @@ canvas { width: 100%; border-radius: 8px; background: #fafbfc;
 .btn:hover { opacity: 0.85; }
 .btn-primary { background: var(--navy); color: white; }
 .btn-secondary { background: var(--border); color: var(--text); }
+.btn-danger { background: #e74c3c; color: white; }
 
 /* Warning banner */
 .warning-banner { display: none; background: #fef9e7;
@@ -1224,6 +1226,7 @@ details summary:hover { color: var(--navy); }
       <button class="btn btn-primary" onclick="openReport()">Open Full Report</button>
       <button class="btn btn-primary" onclick="downloadReport()">Download Report</button>
       <button class="btn btn-secondary" onclick="runAgain()">Run Again</button>
+      <button class="btn btn-danger" onclick="quitServer()">Quit</button>
     </div>
   </div>
 </div>
@@ -1482,6 +1485,11 @@ function runAgain() {
   chartData = []; phaseNames = []; phaseStarts = [];
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 }
+
+function quitServer() {
+  if (!confirm('Stop the bufferbloat server and close this tab?')) return;
+  fetch('/quit', {method: 'POST'}).finally(() => window.close());
+}
 </script>
 </body>
 </html>"""
@@ -1615,6 +1623,13 @@ def create_app():
         r.headers["Content-Type"] = "text/html"
         r.headers["Content-Disposition"] = "attachment; filename=bufferbloat-report.html"
         return r
+
+    @app.post("/quit")
+    def quit_server():
+        import signal
+        response = jsonify({"ok": True})
+        threading.Thread(target=lambda: (time.sleep(0.3), os.kill(os.getpid(), signal.SIGTERM)), daemon=True).start()
+        return response
 
     return app
 
