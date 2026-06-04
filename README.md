@@ -4,9 +4,7 @@ A command-line tool that measures **bufferbloat** — the latency spike your con
 
 ## Web GUI
 
-![Bufferbloat GUI — idle](screenshot-idle.png)
-
-![Bufferbloat GUI — live test with RTT chart and results](screenshot-running2.png)
+![Bufferbloat GUI demo](demo.gif)
 
 Launch with `python3 bufferbloat.py --gui` — opens automatically in your browser.
 
