@@ -5,6 +5,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.1.1] - 2026-06-04
+
+### Added
+- **Quit button** in the GUI done screen — click to stop the Flask server and close the browser tab without needing Ctrl+C in the terminal
+- Cleaner terminal startup message shows both ways to stop the server
+
+---
+
 ## [1.1.0] - 2026-06-04
 
 ### Added
