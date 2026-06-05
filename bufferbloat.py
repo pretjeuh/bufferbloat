@@ -104,39 +104,39 @@ TARGETS = {
     "quad9":          ("9.9.9.9",          "Quad9 DNS (anycast, global)"),
     "opendns":        ("208.67.222.222",   "OpenDNS (anycast, global)"),
     # Western Europe
-    "amsterdam":      ("194.109.6.66",     "AMS-IX Amsterdam, Netherlands"),
-    "frankfurt":      ("80.81.192.1",      "DE-CIX Frankfurt, Germany"),
-    "london":         ("5.57.80.1",        "LINX London, UK"),
-    "paris":          ("193.251.128.1",    "France-IX Paris, France"),
-    "madrid":         ("195.66.224.51",    "ESPANIX Madrid, Spain"),
-    "milan":          ("193.201.224.225",  "MIX Milan, Italy"),
-    "zurich":         ("194.42.48.1",      "SwissIX Zurich, Switzerland"),
-    "lisbon":         ("194.65.48.1",      "GigaPIX Lisbon, Portugal"),
-    "brussels":       ("193.191.16.1",     "BNIX Brussels, Belgium"),
+    "amsterdam":      ("185.102.218.1",   "CDN77 Amsterdam, Netherlands"),
+    "frankfurt":      ("185.102.219.93",  "CDN77 Frankfurt, Germany"),
+    "london":         ("185.59.221.51",   "CDN77 London, UK"),
+    "paris":          ("185.93.2.193",    "CDN77 Paris, France"),
+    "madrid":         ("185.93.3.50",     "CDN77 Madrid, Spain"),
+    "milan":          ("84.17.59.129",    "CDN77 Milan, Italy"),
+    "zurich":         ("89.187.165.1",    "CDN77 Zurich, Switzerland"),
+    "lisbon":         ("109.61.94.65",    "CDN77 Lisbon, Portugal"),
+    "brussels":       ("207.211.214.65",  "CDN77 Brussels, Belgium"),
     # Northern Europe
-    "stockholm":      ("195.69.119.1",     "Netnod Stockholm, Sweden"),
-    "helsinki":       ("193.110.224.3",    "FICIX Helsinki, Finland"),
-    "oslo":           ("193.156.90.1",     "NIX Oslo, Norway"),
-    "copenhagen":     ("193.163.0.1",      "Netnod Copenhagen, Denmark"),
+    "stockholm":      ("185.76.9.135",    "CDN77 Stockholm, Sweden"),
+    "helsinki":       ("65.21.54.60",     "Hetzner Helsinki, Finland"),
+    "oslo":           ("95.173.205.1",    "CDN77 Oslo, Norway"),
+    "copenhagen":     ("121.127.45.65",   "CDN77 Copenhagen, Denmark"),
     # Eastern / Central Europe
-    "warsaw":         ("195.187.255.254",  "PLIX Warsaw, Poland"),
-    "prague":         ("91.210.16.1",      "NIX.CZ Prague, Czech Republic"),
-    "vienna":         ("193.0.0.1",        "RIPE NCC Vienna, Austria"),
-    "budapest":       ("193.188.137.1",    "BIX Budapest, Hungary"),
-    "sofia":          ("217.16.12.1",      "B-IX Sofia, Bulgaria"),
-    "bucharest":      ("185.1.47.1",       "INTERLAN Bucharest, Romania"),
+    "warsaw":         ("185.246.208.67",  "CDN77 Warsaw, Poland"),
+    "prague":         ("185.152.65.113",  "CDN77 Prague, Czech Republic"),
+    "vienna":         ("185.180.12.40",   "CDN77 Vienna, Austria"),
+    "budapest":       ("79.127.133.1",    "CDN77 Budapest, Hungary"),
+    "sofia":          ("37.19.203.1",     "CDN77 Sofia, Bulgaria"),
+    "bucharest":      ("185.102.217.170", "CDN77 Bucharest, Romania"),
     # Turkey
-    "istanbul":       ("193.140.100.1",    "IXTR Istanbul Internet Exchange, Turkey"),
-    "ist-ix":         ("193.140.100.1",    "IXTR Istanbul Internet Exchange, Turkey"),
+    "istanbul":       ("156.146.52.1",    "CDN77 Istanbul, Turkey"),
+    "ist-ix":         ("156.146.52.1",    "CDN77 Istanbul, Turkey"),
     # Middle East
-    "dubai":          ("185.120.0.1",      "Emirates IX Dubai, UAE"),
+    "dubai":          ("89.222.117.129",  "CDN77 Fujairah/UAE"),
     # North America
-    "newyork":        ("198.32.134.1",     "DE-CIX New York, USA"),
-    "ashburn":        ("198.32.195.1",     "Equinix Ashburn (DC), USA"),
+    "newyork":        ("185.59.223.8",    "CDN77 New York, USA"),
+    "ashburn":        ("37.19.206.20",    "CDN77 Ashburn (DC), USA"),
     # Asia Pacific
-    "singapore":      ("103.11.68.1",      "SGIX Singapore"),
-    "tokyo":          ("202.249.2.1",      "JPIX Tokyo, Japan"),
-    "sydney":         ("218.100.52.1",     "PIPE Sydney, Australia"),
+    "singapore":      ("89.187.162.1",    "CDN77 Singapore"),
+    "tokyo":          ("89.187.160.1",    "CDN77 Tokyo, Japan"),
+    "sydney":         ("143.244.63.144",  "CDN77 Sydney, Australia"),
 }
 
 GRADE_THRESHOLDS = [
@@ -929,6 +929,16 @@ def main():
         print("  Upload    : disabled")
     print("=" * 50)
 
+    print(f"  Checking reachability of {ping_host}...", end=" ", flush=True)
+    probe = ping_once(ping_host)
+    if probe is None:
+        print("UNREACHABLE")
+        print(f"\n  ⚠  WARNING: {ping_host} did not respond to ping.")
+        print("  Results will show timeouts instead of real latency.")
+        print("  Consider choosing a different target with --target.\n")
+    else:
+        print(f"{probe:.0f} ms")
+
     baseline, loaded_phases, all_results, total_duration = run_test(
         duration=args.duration,
         ping_host=ping_host,
@@ -1373,28 +1383,52 @@ function startTest() {
   const noUpload = !document.getElementById('uploadToggle').checked;
   const customPing = document.getElementById('customPingHost').value.trim();
 
+  const pingHost = customPing || (TARGETS[target] ? TARGETS[target][0] : null);
+
   document.getElementById('startBtn').disabled = true;
+  document.getElementById('startBtn').textContent = 'Checking target…';
   document.getElementById('errorMsg').classList.remove('visible');
   document.getElementById('warningBanner').classList.remove('visible');
-  document.body.className = 'body-running';
 
-  chartData = []; phaseNames = []; phaseStarts = [];
-  currentPhaseIdx = -1;
-  document.getElementById('phaseCards').innerHTML = '';
-  resizeCanvas();
+  const probe = pingHost
+    ? fetch('/probe', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({host: pingHost})}).then(r => r.json())
+    : Promise.resolve({reachable: true});
 
-  fetch('/start', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({target, server, duration, no_upload: noUpload, custom_ping: customPing})
-  }).then(r => {
-    if (!r.ok) return r.json().then(d => { throw new Error(d.error || 'Start failed'); });
-    return r.json();
+  probe.then(result => {
+    if (!result.reachable) {
+      return new Promise((resolve, reject) => {
+        const ok = confirm(
+          `⚠ ${pingHost} did not respond to ping.\n\nThis target may not be reachable from your network — the test will likely show timeouts instead of real latency.\n\nRun the test anyway?`
+        );
+        ok ? resolve() : reject(new Error('cancelled'));
+      });
+    }
+  }).then(() => {
+    document.getElementById('startBtn').textContent = 'Start Test';
+    document.body.className = 'body-running';
+    chartData = []; phaseNames = []; phaseStarts = [];
+    currentPhaseIdx = -1;
+    document.getElementById('phaseCards').innerHTML = '';
+    resizeCanvas();
+
+    return fetch('/start', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({target, server, duration, no_upload: noUpload, custom_ping: customPing})
+    }).then(r => {
+      if (!r.ok) return r.json().then(d => { throw new Error(d.error || 'Start failed'); });
+      return r.json();
+    });
   }).then(() => {
     es = new EventSource('/stream');
     es.onmessage = handleEvent;
     es.onerror = () => showError('Connection to test server lost.');
-  }).catch(err => showError(err.message));
+  }).catch(err => {
+    document.getElementById('startBtn').textContent = 'Start Test';
+    document.getElementById('startBtn').disabled = false;
+    document.body.className = '';
+    if (err.message !== 'cancelled') showError(err.message);
+  });
 }
 
 function handleEvent(e) {
@@ -1556,6 +1590,15 @@ def create_app():
     @app.get("/")
     def index():
         return render_template_string(GUI_TEMPLATE, targets_json=targets_json)
+
+    @app.post("/probe")
+    def probe():
+        data = request.get_json() or {}
+        host = (data.get("host") or "").strip()
+        if not host:
+            return jsonify({"error": "missing host"}), 400
+        rtt = ping_once(host)
+        return jsonify({"reachable": rtt is not None, "rtt": rtt})
 
     @app.post("/start")
     def start():

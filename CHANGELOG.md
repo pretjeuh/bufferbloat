@@ -5,6 +5,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.2.0] - 2026-06-05
+
+### Changed
+- **All regional ping targets replaced** — IXP route-server IPs (which blocked ICMP) swapped for CDN77 PoP addresses that reliably respond to ping from any home connection worldwide
+- Target descriptions updated to reflect new infrastructure (CDN77 / Hetzner)
+
+### Added
+- **Reachability pre-check (GUI)** — before starting a test the browser probes the selected target; if it doesn't respond, a confirmation dialog warns the user and offers to cancel
+- **Reachability pre-check (CLI)** — prints a quick ping result for the target before the test starts; warns clearly if the target is unreachable
+
+---
+
 ## [1.1.1] - 2026-06-04
 
 ### Added
