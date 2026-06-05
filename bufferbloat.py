@@ -678,6 +678,21 @@ def build_html(
     ping_label_escaped = _html.escape(ping_label)
     server_label_escaped = _html.escape(server_label)
 
+    worst_bloat_ms: int | None = None
+    max_dl_mbps: float | None = None
+    max_ul_mbps: float | None = None
+    for p in phases:
+        b = p.bloat(baseline)
+        if b is not None:
+            worst_bloat_ms = int(round(b)) if worst_bloat_ms is None else max(worst_bloat_ms, int(round(b)))
+        if p.dl_mbps() is not None:
+            max_dl_mbps = p.dl_mbps() if max_dl_mbps is None else max(max_dl_mbps, p.dl_mbps())
+        if p.ul_mbps() is not None:
+            max_ul_mbps = p.ul_mbps() if max_ul_mbps is None else max(max_ul_mbps, p.ul_mbps())
+    bloat_js = "null" if worst_bloat_ms is None else str(worst_bloat_ms)
+    dl_js = "null" if max_dl_mbps is None else f"{max_dl_mbps:.2f}"
+    ul_js = "null" if max_ul_mbps is None else f"{max_ul_mbps:.2f}"
+
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -722,6 +737,23 @@ def build_html(
   .remediation.warn h3 {{ color: #b7770d; }}
   .remediation.bad {{ background: #fdf2f2; border-left: 4px solid #e74c3c; }}
   .remediation.bad h3 {{ color: #c0392b; }}
+  .submit-card {{ background: white; border-radius: 8px; padding: 20px 24px; margin: 24px 0;
+                  box-shadow: 0 1px 4px rgba(0,0,0,.1); font-size: .93em; }}
+  .submit-card h3 {{ margin: 0 0 6px; color: #2c3e50; }}
+  .submit-card p {{ color: #7f8c8d; margin: 0 0 14px; font-size: .9em; }}
+  .submit-card .row {{ display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }}
+  .submit-card input, .submit-card select {{ width: 100%; padding: 8px 10px; border: 1px solid #d5dbdf;
+                                              border-radius: 4px; font-size: .9em; font-family: inherit; }}
+  .submit-card button {{ background: #3498db; color: white; border: 0; padding: 10px 18px;
+                          border-radius: 4px; font-size: .95em; cursor: pointer; font-weight: 600; }}
+  .submit-card button:hover {{ background: #2980b9; }}
+  .submit-card button:disabled {{ background: #95a5a6; cursor: not-allowed; }}
+  .submit-status {{ margin-top: 10px; font-size: .9em; }}
+  .submit-status.ok {{ color: #1e8449; }}
+  .submit-status.err {{ color: #c0392b; }}
+  .submit-card .leaderboard-link {{ display: inline-block; margin-top: 12px; color: #2980b9;
+                                     text-decoration: none; font-size: .9em; }}
+  .submit-card .leaderboard-link:hover {{ text-decoration: underline; }}
 </style>
 </head>
 <body>
@@ -765,6 +797,75 @@ def build_html(
 </div>
 
 {remediation}
+
+<div class="submit-card">
+  <h3>📊 Submit your result to the leaderboard</h3>
+  <p>Help build a global picture of bufferbloat. All fields optional except country.</p>
+  <form id="bbSubmitForm" onsubmit="return bbSubmit(event)">
+    <div class="row">
+      <input type="text" id="bbCountry" placeholder="Country (e.g. Netherlands)" required maxlength="100">
+      <input type="text" id="bbIsp" placeholder="ISP (e.g. KPN)" maxlength="200">
+    </div>
+    <div class="row">
+      <input type="text" id="bbRouter" placeholder="Router / firewall (e.g. OPNsense)" maxlength="200">
+      <select id="bbConn">
+        <option value="">Connection type…</option>
+        <option value="Fiber">Fiber</option>
+        <option value="Cable">Cable</option>
+        <option value="DSL">DSL</option>
+        <option value="5G">5G / mobile</option>
+        <option value="Satellite">Satellite</option>
+        <option value="Starlink">Starlink</option>
+        <option value="Other">Other</option>
+      </select>
+    </div>
+    <button type="submit" id="bbSubmitBtn">Submit result</button>
+    <a href="https://bufferbloat.kroesneger.nl" target="_blank" class="leaderboard-link">View leaderboard →</a>
+    <div id="bbStatus" class="submit-status"></div>
+  </form>
+</div>
+<script>
+  const BB_RESULT = {{
+    grade: "{grade}",
+    bloat_ms: {bloat_js},
+    download_mbps: {dl_js},
+    upload_mbps: {ul_js}
+  }};
+  async function bbSubmit(e) {{
+    e.preventDefault();
+    const btn = document.getElementById('bbSubmitBtn');
+    const status = document.getElementById('bbStatus');
+    btn.disabled = true; status.className = 'submit-status'; status.textContent = 'Submitting…';
+    const payload = Object.assign({{}}, BB_RESULT, {{
+      country: document.getElementById('bbCountry').value.trim(),
+      isp: document.getElementById('bbIsp').value.trim(),
+      router: document.getElementById('bbRouter').value.trim(),
+      connection_type: document.getElementById('bbConn').value
+    }});
+    try {{
+      const r = await fetch('https://bufferbloat.kroesneger.nl/submit', {{
+        method: 'POST',
+        headers: {{ 'Content-Type': 'application/json' }},
+        body: JSON.stringify(payload)
+      }});
+      if (r.ok) {{
+        status.className = 'submit-status ok';
+        status.innerHTML = '✓ Submitted. <a href="https://bufferbloat.kroesneger.nl" target="_blank">See leaderboard</a>';
+        document.getElementById('bbSubmitForm').querySelectorAll('input,select,button').forEach(el => el.disabled = true);
+      }} else {{
+        const j = await r.json().catch(() => ({{}}));
+        status.className = 'submit-status err';
+        status.textContent = 'Error: ' + (j.error || r.statusText);
+        btn.disabled = false;
+      }}
+    }} catch (err) {{
+      status.className = 'submit-status err';
+      status.textContent = 'Network error: ' + err.message;
+      btn.disabled = false;
+    }}
+    return false;
+  }}
+</script>
 
 </body>
 </html>"""
