@@ -5,6 +5,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.2.2] - 2026-06-05
+
+### Added
+- **"What to do about it" section in the full report** — grade-specific remediation advice with concrete steps for enabling AQM (CAKE/fq_codel), configuring OpenWrt SQM, dealing with ISP modems, and links to further resources. Green for A/B, amber for C, red for D/F.
+
+---
+
 ## [1.2.1] - 2026-06-05
 
 ### Fixed

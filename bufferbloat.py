@@ -383,6 +383,61 @@ def overall_grade(phases: list, baseline: PhaseResult) -> str:
     return worst
 
 
+def remediation_html(grade: str) -> str:
+    if grade in ("A", "B"):
+        return """
+<div class="remediation good">
+  <h3>&#x2705; Your connection looks healthy</h3>
+  <p>Your router or modem is already managing its queues well. Here's what's keeping it that way:</p>
+  <ul>
+    <li><strong>Active Queue Management (AQM)</strong> — likely already enabled on your router (fq_codel, CAKE, or similar). Keep it on.</li>
+    <li><strong>Keep firmware up to date</strong> — router vendors regularly improve queue management in updates.</li>
+    <li>Re-run this test occasionally, especially after ISP modem swaps or router firmware changes.</li>
+  </ul>
+</div>"""
+    elif grade == "C":
+        return """
+<div class="remediation warn">
+  <h3>&#x26A0;&#xFE0F; Moderate bufferbloat — fixable with AQM</h3>
+  <p>Your router or modem is not managing its send queue aggressively enough. The most effective fix is enabling <strong>Active Queue Management (AQM)</strong>:</p>
+  <ul>
+    <li><strong>OpenWrt / DD-WRT routers</strong> — go to <em>Network &rarr; SQM QoS</em> and enable <code>fq_codel</code> or <code>CAKE</code>. Set the bandwidth slightly below your actual line speed (e.g. 95%).</li>
+    <li><strong>pfSense / OPNsense</strong> — enable HFSC or CAKE shaper under <em>Firewall &rarr; Traffic Shaper</em>.</li>
+    <li><strong>Consumer routers (ASUS, TP-Link, Netgear)</strong> — look for "Adaptive QoS", "QoS", or "Traffic Control" in the web UI. Enable it and set your line speed.</li>
+    <li><strong>ISP-supplied modem/router combos</strong> — these often have oversized buffers with no AQM option. Consider putting it in bridge mode and adding your own router with AQM.</li>
+  </ul>
+  <p><strong>Background:</strong> <a href="https://www.bufferbloat.net/projects/bloat/wiki/What_can_I_do_about_Bufferbloat/">bufferbloat.net — What can I do about Bufferbloat?</a></p>
+</div>"""
+    else:  # D or F
+        return """
+<div class="remediation bad">
+  <h3>&#x1F6A8; Significant bufferbloat — action recommended</h3>
+  <p>Your connection has a large queue somewhere between your computer and the internet. This causes bad latency spikes during any load. Fix options, from easiest to most effective:</p>
+  <ol>
+    <li>
+      <strong>Enable AQM on your router</strong> — the single most impactful change.
+      <ul>
+        <li><strong>OpenWrt</strong>: install <code>luci-app-sqm</code>, enable CAKE on your WAN interface, set bandwidth to ~95% of your line speed.</li>
+        <li><strong>OPNsense/pfSense</strong>: enable CAKE or fq_codel traffic shaper.</li>
+        <li><strong>Consumer router</strong>: find "QoS" or "Traffic Control" in the admin panel and enable it with your actual line speeds.</li>
+      </ul>
+    </li>
+    <li>
+      <strong>Check your ISP modem</strong> — many ISP-supplied devices have large fixed buffers and no AQM. Put the modem in bridge/passthrough mode and use your own router for everything.</li>
+    <li>
+      <strong>Replace the router</strong> — if your router has no AQM option, consider a device that supports OpenWrt. Almost any modern router running OpenWrt with CAKE will dramatically improve results.</li>
+    <li>
+      <strong>Contact your ISP</strong> — some ISPs have bufferbloat issues in their own infrastructure (DSLAM, CMTS, etc.). If your baseline RTT is high and you've already enabled AQM locally, ask your ISP.</li>
+  </ol>
+  <p>
+    <strong>Learn more:</strong><br>
+    <a href="https://www.bufferbloat.net/projects/bloat/wiki/What_can_I_do_about_Bufferbloat/">bufferbloat.net — What can I do about Bufferbloat?</a><br>
+    <a href="https://openwrt.org/docs/guide-user/network/traffic_shaping/sqm">OpenWrt SQM / CAKE setup guide</a><br>
+    <a href="https://www.waveform.com/tools/bufferbloat">Waveform bufferbloat test (cross-check)</a>
+  </p>
+</div>"""
+
+
 def interpretation(phases: list, baseline: PhaseResult) -> str:
     grade = overall_grade(phases, baseline)
     bs = baseline.stats()
@@ -560,6 +615,7 @@ def build_html(
     boxplot_b64 = make_boxplot_chart(baseline, phases)
     speed_b64 = make_speed_chart(phases)
     interp = interpretation(phases, baseline)
+    remediation = remediation_html(grade)
 
     baseline_loss = baseline.packet_loss()
     warning_html = ""
@@ -653,6 +709,19 @@ def build_html(
               padding: 14px 20px; margin: 0 0 24px; box-shadow: 0 1px 4px rgba(0,0,0,.1);
               font-size: .92em; line-height: 1.6; }}
   .warning strong {{ color: #d68910; }}
+  .remediation {{ border-radius: 8px; padding: 20px 24px; margin: 24px 0;
+                  box-shadow: 0 1px 4px rgba(0,0,0,.1); font-size: .93em; line-height: 1.7; }}
+  .remediation h3 {{ margin: 0 0 10px; font-size: 1.05em; }}
+  .remediation ul, .remediation ol {{ margin: 8px 0 8px 20px; padding: 0; }}
+  .remediation li {{ margin-bottom: 6px; }}
+  .remediation a {{ color: #2980b9; }}
+  .remediation code {{ background: #f4f4f4; padding: 1px 5px; border-radius: 3px; font-size: .9em; }}
+  .remediation.good {{ background: #eafaf1; border-left: 4px solid #2ecc71; }}
+  .remediation.good h3 {{ color: #1e8449; }}
+  .remediation.warn {{ background: #fef9e7; border-left: 4px solid #f39c12; }}
+  .remediation.warn h3 {{ color: #b7770d; }}
+  .remediation.bad {{ background: #fdf2f2; border-left: 4px solid #e74c3c; }}
+  .remediation.bad h3 {{ color: #c0392b; }}
 </style>
 </head>
 <body>
@@ -694,6 +763,8 @@ def build_html(
   <h3>Interpretation</h3>
   <p>{interp}</p>
 </div>
+
+{remediation}
 
 </body>
 </html>"""
