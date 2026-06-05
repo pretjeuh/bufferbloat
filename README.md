@@ -119,6 +119,18 @@ The HTML report is fully self-contained (no external dependencies, works offline
 - RTT distribution box plots per phase
 - Throughput bar chart (download and upload Mbps per phase)
 - Plain-English interpretation of results
+- **Submit-to-leaderboard button** (optional) — share your result with the community
+
+## Leaderboard
+
+Generated reports include a one-click submission to the public leaderboard at
+**[bufferbloat.kroesneger.nl](https://bufferbloat.kroesneger.nl)** — see how
+your bufferbloat compares to other countries, ISPs, and router setups.
+
+Submissions are anonymous (grade, country, ISP, router, connection type, bloat ms, throughput).
+No IP addresses or personal data are stored.
+
+Sample reports: **[pretjeuh.github.io/bufferbloat](https://pretjeuh.github.io/bufferbloat/)**
 
 ## How load is generated
 

@@ -5,6 +5,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.3.0] - 2026-06-05
+
+### Added
+- **Submit-to-leaderboard button in the report** — generated HTML reports now include an optional one-click form to submit your result (grade, country, ISP, router, connection type, bloat ms, throughput) to the public leaderboard at [bufferbloat.kroesneger.nl](https://bufferbloat.kroesneger.nl). All fields except country are optional; no IP or personal data is captured.
+- **Leaderboard section in README** linking to the public leaderboard and the sample reports site.
+
+---
+
 ## [1.2.2] - 2026-06-05
 
 ### Added
