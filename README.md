@@ -38,12 +38,41 @@ This tool measures it by pinging a target once per second while simultaneously s
 
 ## Requirements
 
+Python 3.8+ required. Works on macOS, Linux, and Windows.
+
+### Recommended: use a virtual environment
+
+This works on every OS and avoids the `externally-managed-environment` error
+on modern Debian/Ubuntu/Fedora.
+
 ```bash
+python3 -m venv .venv
+source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install matplotlib
-pip install weasyprint  # optional, only needed for PDF output
+pip install weasyprint          # optional, only for PDF output
+python bufferbloat.py
 ```
 
-Python 3.6+ required. Works on macOS and Linux.
+### Alternative: pipx (single-command tools)
+
+```bash
+pipx install matplotlib         # or: pip install --user matplotlib
+```
+
+### Debian/Ubuntu/Fedora without a venv
+
+If you really want to install system-wide, either install via apt/dnf:
+
+```bash
+sudo apt install python3-matplotlib   # Debian/Ubuntu
+sudo dnf install python3-matplotlib   # Fedora
+```
+
+…or override PEP 668 (not recommended):
+
+```bash
+pip install --break-system-packages matplotlib
+```
 
 ## Usage
 

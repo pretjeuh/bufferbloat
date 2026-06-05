@@ -5,6 +5,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.3.1] - 2026-06-05
+
+### Fixed
+- **Matplotlib < 3.9 compatibility** — `make_boxplot_chart` now falls back from `tick_labels=` (new) to `labels=` (old kwarg), so the report generates correctly on older Debian/Ubuntu installs (matplotlib 3.6.x).
+
+### Changed
+- **Install instructions rewritten** for modern Linux (PEP 668 / `externally-managed-environment`). README now recommends a venv as the default path, with notes for `pipx`, distro packages (`apt`/`dnf install python3-matplotlib`), and the `--break-system-packages` escape hatch.
+
+---
+
 ## [1.3.0] - 2026-06-05
 
 ### Added

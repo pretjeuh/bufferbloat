@@ -528,12 +528,15 @@ def make_boxplot_chart(baseline: PhaseResult, phases: list) -> str:
     colors = ["#3498db", "#e74c3c", "#2ecc71", "#9b59b6", "#f39c12"]
 
     fig, ax = plt.subplots(figsize=(9, 4))
-    bp = ax.boxplot(
-        [d if d else [0] for d in data],
-        tick_labels=labels,
+    # matplotlib renamed `labels` -> `tick_labels` in 3.9; support both.
+    boxplot_kwargs = dict(
         patch_artist=True,
         medianprops={"color": "black", "linewidth": 2},
     )
+    try:
+        bp = ax.boxplot([d if d else [0] for d in data], tick_labels=labels, **boxplot_kwargs)
+    except TypeError:
+        bp = ax.boxplot([d if d else [0] for d in data], labels=labels, **boxplot_kwargs)
     for patch, color in zip(bp["boxes"], colors):
         patch.set_facecolor(color)
         patch.set_alpha(0.7)
