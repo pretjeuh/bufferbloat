@@ -5,6 +5,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.2.1] - 2026-06-05
+
+### Fixed
+- **XSS hardening** — phase names and warning messages escaped before `innerHTML` insertion; `ping_label` and `server_label` HTML-escaped in saved reports
+- **Host validation** — `/probe` endpoint now rejects hosts that don't match a safe hostname/IP pattern
+- **SSE race condition** — `/stream` generator now snapshots the session at request time, preventing stale queue references on reconnect
+- **`overall_grade` false A** — returns `"?"` instead of `"A"` when no phases are present
+- **`verbose` flag** — RTT lines now only print when `--verbose` is passed (previously always printed)
+- **Duplicate target** — removed `ist-ix` alias (identical to `istanbul`)
+
+---
+
 ## [1.2.0] - 2026-06-05
 
 ### Changed

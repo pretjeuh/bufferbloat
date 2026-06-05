@@ -127,7 +127,6 @@ TARGETS = {
     "bucharest":      ("185.102.217.170", "CDN77 Bucharest, Romania"),
     # Turkey
     "istanbul":       ("156.146.52.1",    "CDN77 Istanbul, Turkey"),
-    "ist-ix":         ("156.146.52.1",    "CDN77 Istanbul, Turkey"),
     # Middle East
     "dubai":          ("89.222.117.129",  "CDN77 Fujairah/UAE"),
     # North America
@@ -288,7 +287,8 @@ def measure_phase(
         rtt = ping_once(ping_host)
         phase.rtts.append(rtt)
         label = f"{rtt:.1f} ms" if rtt is not None else "timeout"
-        print(f"  [{phase.name}] RTT: {label}", flush=True)
+        if verbose:
+            print(f"  [{phase.name}] RTT: {label}", flush=True)
         if event_callback:
             event_callback({"type": "rtt", "phase": phase.name, "rtt": rtt, "seq": seq})
         seq += 1
@@ -373,6 +373,8 @@ def start_load(
 
 def overall_grade(phases: list, baseline: PhaseResult) -> str:
     order = "ABCDF?"
+    if not phases:
+        return "?"
     worst = "A"
     for p in phases:
         g = p.grade(baseline)
@@ -616,6 +618,10 @@ def build_html(
             f"</tr>\n"
         )
 
+    import html as _html
+    ping_label_escaped = _html.escape(ping_label)
+    server_label_escaped = _html.escape(server_label)
+
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -651,7 +657,7 @@ def build_html(
 </head>
 <body>
 <h1>Bufferbloat Test Report</h1>
-<p class="meta">Generated: {timestamp} &nbsp;|&nbsp; Ping target: {ping_label} &nbsp;|&nbsp; Load server: {server_label} &nbsp;|&nbsp; Total duration: {total_duration:.0f}s</p>
+<p class="meta">Generated: {timestamp} &nbsp;|&nbsp; Ping target: {ping_label_escaped} &nbsp;|&nbsp; Load server: {server_label_escaped} &nbsp;|&nbsp; Total duration: {total_duration:.0f}s</p>
 
 {warning_html}
 <div class="overall">
@@ -832,7 +838,7 @@ def list_targets() -> None:
         ("Western Europe",        ["amsterdam", "frankfurt", "london", "paris", "madrid", "milan", "zurich", "lisbon", "brussels"]),
         ("Northern Europe",       ["stockholm", "helsinki", "oslo", "copenhagen"]),
         ("Eastern/Central Europe",["warsaw", "prague", "vienna", "budapest", "sofia", "bucharest"]),
-        ("Turkey",                ["istanbul", "ist-ix"]),
+        ("Turkey",                ["istanbul"]),
         ("Middle East",           ["dubai"]),
         ("North America",         ["newyork", "ashburn"]),
         ("Asia Pacific",          ["singapore", "tokyo", "sydney"]),
@@ -1245,12 +1251,15 @@ details summary:hover { color: var(--navy); }
 <script>
 // ── Target population ──────────────────────────────────────────────────────
 const TARGETS = JSON.parse(document.getElementById('targets-data').textContent);
+function escapeHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
 const GROUPS = [
   ["Global / anycast",       ["cloudflare","google","quad9","opendns"]],
   ["Western Europe",         ["amsterdam","frankfurt","london","paris","madrid","milan","zurich","lisbon","brussels"]],
   ["Northern Europe",        ["stockholm","helsinki","oslo","copenhagen"]],
   ["Eastern/Central Europe", ["warsaw","prague","vienna","budapest","sofia","bucharest"]],
-  ["Turkey",                 ["istanbul","ist-ix"]],
+  ["Turkey",                 ["istanbul"]],
   ["Middle East",            ["dubai"]],
   ["North America",          ["newyork","ashburn"]],
   ["Asia Pacific",           ["singapore","tokyo","sydney"]],
@@ -1467,14 +1476,14 @@ function handleEvent(e) {
     const ul = msg.ul_mbps ? ' · ↑' + msg.ul_mbps.toFixed(1) + ' Mbps' : '';
     card.innerHTML = `
       <div>
-        <div class="pc-name">${msg.phase}</div>
+        <div class="pc-name">${escapeHtml(msg.phase)}</div>
         <div class="pc-stats">median ${median} · bloat ${bloat}${loss}${dl}${ul}</div>
       </div>
-      <div class="pc-grade" style="color:${gradeColor}">${grade}</div>`;
+      <div class="pc-grade" style="color:${gradeColor}">${escapeHtml(grade)}</div>`;
     document.getElementById('phaseCards').appendChild(card);
   } else if (msg.type === 'warning') {
     const b = document.getElementById('warningBanner');
-    b.innerHTML = '<strong>&#9888; ' + msg.title + '</strong><br>' + msg.message;
+    b.innerHTML = '<strong>&#9888; ' + escapeHtml(msg.title) + '</strong><br>' + escapeHtml(msg.message);
     b.classList.add('visible');
   } else if (msg.type === 'done') {
     clearInterval(progressTimer);
@@ -1597,6 +1606,8 @@ def create_app():
         host = (data.get("host") or "").strip()
         if not host:
             return jsonify({"error": "missing host"}), 400
+        if not re.match(r'^[a-zA-Z0-9.\-]{1,253}$', host):
+            return jsonify({"error": "invalid host"}), 400
         rtt = ping_once(host)
         return jsonify({"reachable": rtt is not None, "rtt": rtt})
 
@@ -1636,8 +1647,9 @@ def create_app():
 
     @app.get("/stream")
     def stream():
+        session = _session
         def generate():
-            q = _session.event_queue
+            q = session.event_queue
             while True:
                 try:
                     event = q.get(timeout=30)
